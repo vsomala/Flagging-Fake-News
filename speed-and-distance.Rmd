@@ -1,28 +1,394 @@
 ---
 title: "speed-and-distance"
-output: html_document
+author: "Venkat Somala"
+date: "11/5/2019"
+knit: (function(input_file, encoding) {
+  out_dir <- 'docs';
+  rmarkdown::render(input_file,
+ encoding=encoding,
+ output_file=file.path(dirname(input_file), out_dir, 'index.html'))})
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+
+## Introduction
+
+We are building an algorithm that automatically flags incoming news stories as "fake" or "real" based on th story's information such as title, contents, authours, etc. The dataset can be found at https://www.macalester.edu/~ajohns24/data/buzzfeed.csv. This dataset includes the following information on 182 articles from 2016: title, text (content), authors, source, url address, and type (whether the article is real or fake). 
+
+### Key  Variables
+
+In our algorithm, we made 15 predictors from the 5 columns in the dataset to predict type (fake/real) of the article. Note that our selection of predictors is limited by the availability and quality of the dataset. Comparing fake news and real news in the dataset, we assumed these things may differ. 
+
+1. title length - #words
+2. article length - #words
+
+3. use of exclamation mark in title ("Crazy punctuation - title"")
+4. use of exclamation mark in text ("Crazy punctuation - text"")
+
+5. article sentiment - 
+  - angry - percent of total
+  - sad - percent of total
+  - happy - percent of total
+  - Overall score - average negativity/positivity. Between -5 and 5
+  
+6. title sentiment - 
+  - angry - percent of total
+  - sad - percent of total
+  - happy - percent of total
+  - Overall score - average negativity/positivity. Between -5 and 5
+  
+* Our function finds words with angry/sad/happy connotation in the artcle. We calculate the percentage of words with these sentiments among the total number of words in the article. Similarly, our function find words with positive/negative tone and measure the overall negativity/positivity of the article between -5 and 5 based on the ration of these words. More information can be found at https://www.tidytextmining.com/sentiment.html.
+
+7. URL length - characters
+8. average paragraph length - #words
+9. Is there an Author? - boolean 
+
+* A fair number of the articles in the dataset are missing the author. We marked articles with a blank space in the author column to see if it matters to detect fake news.
+
+10. Number of words in all caps title - percent 
+11. Number of words in all caps article - percent 
+
+* Our function counts the number of words written in all capitals and calculate the percentage of those words among the total number of words. It does not necessarily measure the credibility of sentences since some words are always written in all caps (NAFTA, TPP, etc.).
+
+
+### Example
+
+To demonstrate and summarize the definitions of our new predictors, we chose one real sample article and one fake sample article. 
+
+Fake sample article - http://100percentfedup.com/new-disturbing-video-shows-hillarys-campaign-likely-faked-audience-nc-rally/	
+ 
+- Title length - [WHOA! NEW DISTURBING VIDEO Shows HILLARY'S Campaign Likely FAKED Her Audience At NC Rally * 100percentfedUp.com] 
+We expect that the fake articles are going to have titles that are mostly long and used to draw attention.
+ 
+- Article Length - We expect that a fake article is going to be short in length relative to a real article. 
+ 
+- Crazy Punctuation (title and article) - We expect that a fake article may use a lot of punctuation such as exclamation points and question marks to draw emphasis. 
+ 
+- Sentimemnt Analysis (title and article) - We expect that a fake article is going to have a higher percentage of angry and sad words and a smaller percentage of happy words. We expect that the overall score of the fake articles are going to be negative. 
+ 
+- URL Length - We expect that a fake article is going to have longer URL lengths relative to the real articles.
+ 
+- Author or No? - We expect that a fake article is going to have less real authors than a real article. 
+ 
+Real sample article - http://abcn.ws/2cTj7ap	
+ 
+- Title length - [Young Girl's Emotional Council Speech Laments 'Shame' of Fatal Charlotte Shooting]. We expect for there to be variation of title length among the real articles.
+ 
+- Article Length - We expect that a real article is going to be longer relative to the fake articles. 
+ 
+- Crazy Punctuation (title and article) - We expect that the real articles are going to have less punctuation used to draw emphasis such as exclamation points relative to the fake articles. 
+ 
+- Sentimemnt Analysis (title and article) - We expect that real articles are going to have less angry and sad word percentages. We don't know whether or not happy percentages will be much different relative to fake articles. We expect that a real article will have a positive overall score. 
+ 
+URL Length - We expect that a real article will have shorter URL lengths relative to fake articles. 
+ 
+Author or No? - We expec that real articles will have more authors relative to fake articles. 
+
+
+### Limitation
+
+Our estimation is largely limited by the availability and the quality of the dataset we are using. It is not plausible to accurately detect fake news with a model solely based on 5 variables about 182 articles. As mentioned above, we created 15 predictor variables based on the information provided in the dataset so some of the variables are highly correlated or redundant. Text analysis is not a perfect measure of fakeness since it only reads the article as a group of separate words, thus completely ignores the context. 
+
+## Part 1: Process the data
+
+```{r message=FALSE}
+all_data <- read.csv("https://www.macalester.edu/~ajohns24/data/buzzfeed.csv")
+library(tidytext)
+library(dplyr)
+library(syuzhet)
+library(ggplot2)   # for visualization
+library(caret)     # for machine learning
 ```
 
-## R Markdown
+### Creating functions
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+First, we made a series of functions to create the predictor variables in our model from the dataset. The first functions read the texts and split them into words, and counts the number of words with positive/negative connotations or happiness/sadness/anger. The other functions measure the length of the texts, count number of capital letters, and detect crazy punctuations by counting the number of exclamation mark.
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+```{r}
+getAnger <- function(string) {
+  stringArr <- strsplit(tolower(string), "\\s+")[[1]]
+  get_nrc_sentiment(string)$anger/length(stringArr)
+}
 
-```{r cars}
-summary(cars)
+getJoy <- function(string) {
+  stringArr <- strsplit(tolower(string), "\\s+")[[1]]
+  get_nrc_sentiment(string)$joy/length(stringArr)
+}
+
+getSadness <- function(string) {
+  stringArr <- strsplit(tolower(string), "\\s+")[[1]]
+  get_nrc_sentiment(string)$sadness/length(stringArr)
+}
+
+getNegPos <- function(string) {
+  poa_word_v <- get_tokens(tolower(string), pattern = "\\W")
+  syuzhet_vector <- get_sentiment(poa_word_v, method="afinn")
+  mean(syuzhet_vector)
+}
+
+allCaps <- function(string) {
+  stringArr <- strsplit(string, "\\s+")[[1]]
+  
+  stringTab <- data.frame(words = stringArr, stringsAsFactors = FALSE)
+  allCaps <- stringTab %>% filter(words == toupper(words)) %>% filter(nchar(words) > 1) %>% filter(!(stringr::str_detect(words, "\\d")))
+  
+  dim(allCaps)[1]/dim(stringTab)[1]
+}
+
+lenWords <- function(string) {
+  length(stringArr <- strsplit(string, "\\s+")[[1]])
+}
+
+crazyPunc <- function(string) {
+  stringArr <- strsplit(string, "\\s+")[[1]]
+  stringTab <- data.frame(words = stringArr, stringsAsFactors = FALSE)
+  exclamation <- stringTab %>% filter((stringr::str_detect(words, "!")))
+  
+  dim(exclamation)[1]
+}
 ```
 
-## Including Plots
+Next, using these functions, we made variables from the dataset. THe processed dataset, $new_data$ contains 20 variables, 14 of which are numerical values created by this process.
 
-You can also embed plots, for example:
+### Getting sentiment of title and text
+```{r}
+all_data <- all_data %>%
+  mutate(title = names(all_data)[1])
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+new_data <- all_data %>% mutate(titleSent = Vectorize(getNegPos)(title)) %>% mutate(textSent = Vectorize(getNegPos)(text))
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+new_data %>% mutate_if(is.factor, as.character) -> new_data
+```
+
+### Getting Happy/sad/angry sentiment from title and text
+```{r}
+new_data <- new_data %>% mutate(titleHappy = getJoy(title)) %>%
+                        mutate(titleSad = getSadness(title)) %>%
+                        mutate(titleAngry = getAnger(title))
+
+new_data <- new_data %>% mutate(textHappy = Vectorize(getJoy)(text)) %>%
+                        mutate(textSad = Vectorize(getSadness)(text)) %>%
+                        mutate(textAngry = Vectorize(getAnger)(text))
+```
+
+### Getting percent of all caps words in title and text
+```{r}
+new_data <- new_data %>% mutate(capsTitle = Vectorize(allCaps)(title)) %>%
+                        mutate(capsText = Vectorize(allCaps)(text))
+```
+
+### Getting length of title and text and URL
+```{r}
+new_data <- new_data %>% mutate(lenTitle = Vectorize(lenWords)(title)) %>% mutate(lenText = Vectorize(lenWords)(text))
+
+new_data <- new_data %>% mutate(lenUrl = nchar(url))
+```
+
+### Getting crazy punctuation
+```{r}
+new_data <- new_data %>% mutate(crazyTitle = Vectorize(crazyPunc)(title)) %>% mutate(crazyText = Vectorize(crazyPunc)(text))
+```
+
+Here is the list of variables in the $new_data$. titleSent and textSent would be positive number if the text/title has more positive words but they would be negative if there are more negative words. title/text-Happy/Sad/Angry and caps-Title/text all represent percentage of these words/letters, so they are positive numbers. len-Title/Text/Url and crazy-Title/Text count the number of letters, thus all are positive intengers.
+
+** The article's title in the dataset was wierdly shown as "?..title" in the dataset. We made a new variable "title" from this variable to use them in the functions.
+
+```{r}
+names(new_data)
+```
+
+
+## Part 2: Analyze
+
+As first part of our analysis, we need to select the variables to include in the model. In order to do this, we used LASSO. Although we we only  used LASSO for numerical dependent/output variables in the class, we are able to use LASSO by taking the log of type variable. The line family="binomial" in the model does this for us.
+
+### Use LASSO variable selection to limit our predictors of real or fake article. 
+```{r}
+set.seed(33)
+lambda_grid <- seq(0, 1, length = 100)
+
+# Perform LASSO
+lasso_model <- train(
+    as.factor(type) ~ titleSent + textSent + titleHappy + titleSad + titleAngry + textHappy + textSad + textAngry + capsTitle + capsText + lenTitle + lenText + lenUrl + crazyTitle + crazyText,
+    data = new_data,
+    method = "glmnet",
+    family = "binomial",
+    tuneGrid = data.frame(alpha = 1, lambda = lambda_grid),
+    trControl = trainControl(method = "cv", number = 10, selectionFunction = "best"),
+    metric = "Accuracy",
+    na.action = na.omit
+)
+```
+
+```{r}
+coef(lasso_model$finalModel, 0.001)
+coef(lasso_model$finalModel, 0.09)
+coef(lasso_model$finalModel, lasso_model$bestTune$lambda) #best
+```
+
+```{r}
+lasso_model$bestTune$lambda
+```
+
+
+
+### Our Model
+
+Our final model includes the following 5 variables.
+
+1. Text sentiment - overall score
+2. Text sentiment - Happy
+3. Number of capital letters in text (percentage)
+4. Length of URL
+5. crazyText - exclamation mark in text
+
+Since our model is a log-linear regression model, it predicts the Log value of the odds of the article being a real news. (It's confusing because it doesn't say in the output table. But fake is treated as 0 and real is 1.) The positive coefficients can be interpreted as the higher likelihood of the article being a real news. In contrast, negative coefficients mean more likelihood of fake news.  For example, the overall scores for text sentiment can be associated with higher likelihood of reporting a real news. Long url and crazy text are associated with higher likelihood of fake news. We can confirm this relationship from the mean statistics across the type as well. In the table below, fake articles have lower text sentiment score, longer url and higher crazyText score.   
+
+```{r warning=FALSE}
+new_data %>%
+  group_by(type) %>% 
+  summarize_all(funs(mean))
+
+levels(as.factor(new_data$type))
+```
+
+
+
+### Using one SE
+
+We also performed LASSO using $oneSE$ as the selection function but the result was only leaving one variable as a predictor, lenUrl, so we chose to use best instead.
+
+```{r}
+lasso_model_se <- train(
+    as.factor(type) ~ titleSent + textSent + titleHappy + titleSad + titleAngry + textHappy + textSad + textAngry + capsTitle + capsText + lenTitle + lenText + lenUrl + crazyTitle + crazyText,
+    data = new_data,
+    method = "glmnet",
+    family = "binomial",
+    tuneGrid = data.frame(alpha = 1, lambda = lambda_grid),
+    trControl = trainControl(method = "cv", number = 10, selectionFunction = "oneSE"),
+    metric = "Accuracy",
+    na.action = na.omit
+)
+
+coef(lasso_model_se$finalModel, lasso_model_se$bestTune$lambda) #oneSE
+```
+
+### Plot for our model
+
+Here are the plots for the most important predictors in the model and the Accuracy stats for different lambda. It tells us that TextSent and capsText are the most important predictors
+
+```{r}
+# Plot coefficients for each LASSO
+plot(lasso_model$finalModel, xvar = "lambda", label = TRUE, col = rainbow(20))
+# Codebook for which variables the numbers correspond to
+rownames(lasso_model$finalModel$beta)
+
+lasso_model$bestTune
+plot(lasso_model)
+```    
+
+
+\
+\
+\
+\
+
+```{r warning=FALSE}
+# Perform logistic regression
+logistic_model_1 <- train(
+    as.factor(type) ~ textSent + textHappy + capsText + lenUrl + crazyText,
+    data = new_data,
+    method = "glm",
+    family = "binomial",
+    trControl = trainControl(method = "cv", number = 10),
+    metric = "Accuracy",
+    na.action = na.omit
+)
+
+logistic_model_2 <- train(
+    as.factor(type) ~ textSent + textHappy + capsText + lenUrl + textSad + textAngry + lenText + crazyText,
+    data = new_data,
+    method = "glm",
+    family = "binomial",
+    trControl = trainControl(method = "cv", number = 10),
+    metric = "Accuracy",
+    na.action = na.omit
+)
+```
+
+### Comparing Models
+
+Here is the comparing our final model with another logistic regression model with all the variables in the dataset. We can see that our model has higher CV accuracy, indicating that we should choose the model 1 over the model 2, which seems to be overfitting.
+
+```{r}
+logistic_model_1$results
+logistic_model_2$results
+```
+
+
+```{r}
+# Model summary table
+summary(logistic_model_1)
+
+# Coefficients
+coef(logistic_model_1$finalModel)
+
+# CV accuracy metrics
+logistic_model_1$results
+logistic_model_1$resample
+```
+
+```{r}
+predict_data <- na.omit(logistic_model_1$trainingData)
+classifications <- predict(logistic_model_1, newdata = predict_data, type = "raw")
+```
+
+
+### Confusion Matrix
+
+We use a confusion matrix to describe the performance of our classification (lasso) model. The overall accuracy of our model is .786 or 78.6% accurate. The sensitivity measures the fraction of positive cases that are correctly classified. The sensitivity of our model is .824 or 82.4%. The specificity is the fraction of negative cases that are correctly classified. The specificity of our model is .747 or 74.7%.
+
+```{r}
+confusionMatrix(
+  data = classifications, 
+  reference = as.factor(predict_data$.outcome), 
+  positive = "fake"
+)
+```
+
+
+### ROC
+
+An ROC curve plots the sensitivity (y-axis) and 1 - specificity (x-axis) associated with every possible probability cut-off between 0 & 1. This provides us with a picture of the confusion matrix that we did above. To describe the performance of our lasso model, we examine the area under the curve (AUC). The AUC estimates the probability that a classification tool is more likely to classify y=1 as y=1 than to classify y=0 as y=1. The area under the curve for our model is .807
+
+
+```{r message=FALSE}
+library(pROC)
+
+# model 1 = black
+predict_data_1 <- na.omit(logistic_model_1$trainingData)
+roc(response = predict_data_1$.outcome, pred = fitted(logistic_model_1), plot = TRUE, legacy.axes = TRUE)
+```
+
+
+## Part 3: Summarize
+
+We built an algorithm that automatically flags incoming news stories as "fake" or "real" based on the following information; title, contents, authors, sources, and the URL of the article. Using 182 articles from 2016 flagged "fake" or "real", we first made 15 predictor variables from the information to build the model. In this process, we used function to read the texts and detect the sentiment of the words in the texts. Next, we used LASSO to select the variables to include in the model. Here are the coefficients of the significant variables according to our LASSO model. 
+
+textSent      6.561786   
+textHappy    34.789023   
+capsText    -12.404935  
+lenUrl       -0.027406  
+crazyText    -0.478182
+
+We found that our predictor variables for our text sentiment analysis (txtSent) and for the percent of happy words in the article (textHappy) both had positive coefficients. This means that real articles had more positive words based off of our range indicator and higher percentages of happy words than fake articles did. On the contrary, we found that our predictor variables for the percentage of capital letters in the text (capsText) had a negative sign. This means that fake articles had more capital letters than real articles. Additionally, we found that our predictor variable for the length of the URL (lenUrl) was negative. This indicates that real articles had URLs that were typically shorter in length than the fake articles. Lastly, we found that our predictor variable for the amount of exclamation points used (crazyText) was negative. This indicates that real articles had less exclamation points than fake articles did. 
+
+All of these coefficients made sense to the model and what we initially predicted. Starting with the word sentiments, we expected for the fake articles to be more negative in nature than the real articles. This follows through with our coefficients for happy and positive sentiment. One potential drawback of our model is that these two predictors are correlated. We decided to include both of them in the model since the numbers are not necessarily too similar for the same article. For example, the overall sentiment score can be negative values while happy sentiment is a percentage of happy words in the texts, thus always positive or zero. Additionally, we expected for the fake articles to contain more exclamation points and capital letters to catch reader's attention and make their messages seem more believable. This is also seen with the coefficients for capital text, and crazy text. 
+
+In order to evaluate our model, we then compared our model with another model including all the predictors except for the ones made from title. We excluded these predictors made from titles since we found most of these values were zero for the majority of the articles due to the limited amount of information we can get from titles. Our results showed the accuracy for our model was almost the same or slightly higher than the alternative model. Since our model includes less variables, we confirmed our model is better suited for the analysis. In spite of the limited information provided in the dataset, our final model performed better than we originally expected, with 78.6% overall accuracy, 82.4% sensitivity, and 74.7% specificity. 
+
+
+
+
+

@@ -1,5 +1,5 @@
 ---
-title: "speed-and-distance"
+title: "Flagging Fake News Using Machine Learning"
 author: "Venkat Somala"
 date: "11/5/2019"
 knit: (function(input_file, encoding) {
